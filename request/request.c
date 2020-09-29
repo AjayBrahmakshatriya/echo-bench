@@ -12,19 +12,24 @@ long long get_time_in_us(void) {
 	return tv.tv_sec * 1000000 + tv.tv_usec;	
 }
 int main(int argc, char* argv[]) {
-	if (argc < 4)
+	if (argc < 5)
 		exit(-1);
 	
 	int fd = atoi(argv[1]);
 	int parallel = atoi(argv[2]);	
 	int total_requests = atoi(argv[3]);
+	int packet_size = atoi(argv[4]);
 
 
-	char reserve[16];
+	char *reserve = malloc(packet_size * 2);
 	int reserve_size = 0;
+	char * buffer = malloc(packet_size * 16);
+	char * buffer_process = malloc(packet_size * 18);
 	for (int i = 0; i < parallel; i++) {	
 		long long val = get_time_in_us();
-		if (write(fd, &val, sizeof(long long)) != sizeof(long long)) {
+		memcpy(buffer, &val, sizeof(long long));
+		memset(buffer + sizeof(long long), 0, packet_size - sizeof(long long));
+		if (write(fd, buffer, packet_size) != packet_size) {
 			printf("Write error\n");
 			exit(-1);
 		}
@@ -48,13 +53,11 @@ int main(int argc, char* argv[]) {
 			return -1;
 		} else if (retval) {
 			if (FD_ISSET(fd, &rdfs)) {
-				char buffer[256];
-				int len = read(fd, buffer, 80);
+				int len = read(fd, buffer, packet_size * 15);
 				if (!len) {
 					printf("Zero length read, quitting\n");
 					exit(0);
 				}
-				char buffer_process[256 + 16];
 				memcpy(buffer_process, reserve, reserve_size);
 				memcpy(buffer_process + reserve_size, buffer, len);
 				len += reserve_size;
@@ -62,17 +65,19 @@ int main(int argc, char* argv[]) {
 				int processed = 0;
 				while (processed < len) {
 					int remain = len - processed;
-					if (remain >= sizeof(long long)) {
+					if (remain >= packet_size) {
 						long long val = 0;
 						memcpy(&val, buffer_process + processed, sizeof(long long));
 						long long diff = get_time_in_us() - val;
 						time_log[tot_recv] = diff;
-						processed += sizeof(long long);
+						processed += packet_size;
 						tot_recv++;
 						if (tot_sent < total_requests) {
 							val = get_time_in_us();
-							retval = write(fd, &val, sizeof(long long));
-							if (retval != sizeof (long long)) {
+							memcpy(buffer, &val, sizeof(long long));
+							memset(buffer + sizeof(long long), 0, packet_size - sizeof(long long));
+							retval = write(fd, buffer, packet_size);
+							if (retval != packet_size) {
 								printf("Write failure\n");
 								exit(-1);	
 							}

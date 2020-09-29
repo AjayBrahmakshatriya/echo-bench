@@ -5,7 +5,11 @@ import os
 RESPONSE_BINARY_PATH="./response"
 
 def main():
-	# no arguments to parse here	
+	if len(sys.argv) < 2:
+		print("Usage: " + sys.argv[0] + " <packet_size>")
+		exit(-1)
+	packet_size = int(sys.argv[1])
+
 	s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 	s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 	
@@ -16,7 +20,7 @@ def main():
 		(conn, addr) = s.accept()	
 		if os.fork() == 0:
 			s.close()
-			bin_args = [RESPONSE_BINARY_PATH, str(conn.fileno())]
+			bin_args = [RESPONSE_BINARY_PATH, str(conn.fileno()), str(packet_size)]
 			os.set_inheritable(conn.fileno(), True)
 			os.execv(RESPONSE_BINARY_PATH, bin_args)
 	

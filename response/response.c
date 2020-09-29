@@ -5,10 +5,11 @@
 #include <fcntl.h>
 #include <errno.h>
 int main(int argc, char* argv[]) {
-	if (argc < 2) 
+	if (argc < 3) 
 		exit(-1);
 
 	int fd = atoi(argv[1]);
+	int packet_size = atoi(argv[2]);
 
 	if (fcntl(fd, F_GETFD) == -1 && errno == EBADF) {
                 fprintf(stderr, "Bad file descriptor passed\n");
@@ -18,7 +19,9 @@ int main(int argc, char* argv[]) {
 	
 	printf("Starting receive\n");
 
-	char reserve[16];
+	char *reserve = malloc(packet_size * 2);
+	char *buffer = malloc(packet_size * 16);
+	char *buffer_process = malloc(packet_size * 18);
 	int reserve_size = 0;
 
 	while(1) {
@@ -34,14 +37,12 @@ int main(int argc, char* argv[]) {
 			return -1;
 		} else if (retval) {
 			if (FD_ISSET(fd, &rdfs)) {
-				char buffer[256];
-				int len = read(fd, buffer, 80);
+				int len = read(fd, buffer, 15 * packet_size);
 				
 				if (!len) {
 					printf("Zero length read, quitting\n");
 					exit(0);
 				}
-				char buffer_process[256 + 16];
 				memcpy(buffer_process, reserve, reserve_size);
 				memcpy(buffer_process + reserve_size, buffer, len);
 				len = len + reserve_size;
@@ -49,13 +50,10 @@ int main(int argc, char* argv[]) {
 				int processed = 0;
 				while (processed < len) {
 					int remain = len - processed;
-					if (remain >= sizeof(long long)) {
-						long long val = 0;
-						memcpy(&val, buffer_process + processed, sizeof(long long));
-						//printf("%lld\n", val);
-						processed += sizeof(long long);
-						retval = write(fd, &val, sizeof(long long));
-						if (retval != sizeof (long long )) {
+					if (remain >= packet_size) {
+						retval = write(fd, buffer_process + processed, packet_size);
+						processed += packet_size;
+						if (retval != packet_size) {
 							printf("Write failure\n");
 							exit(-1);
 						}
