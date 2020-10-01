@@ -9,6 +9,9 @@
 #include <asm/uaccess.h>
 #include <linux/socket.h>
 #include <linux/slab.h>
+#include <linux/moduleparam.h>
+
+
 
 
 struct socket *conn_socket = NULL;
@@ -16,10 +19,16 @@ struct socket *conn_socket = NULL;
 
 long long *time_log = NULL;
 int total_requests = 10000;
-int parallel = 100;
-u8 destip[5] = {128, 30, 116, 47, 0};
+int parallel = 1;
+u8 destip[5] = {128, 30, 116, 58, 0};
+int message_length = 16;
 
+module_param(message_length, int, 0644);
+module_param(parallel, int, 0644);
 
+char *reserve = NULL;
+char* buffer = NULL;
+char* buffer_process = NULL;
 
 u32 create_address(u8 *ip)
 {
@@ -66,7 +75,7 @@ int tcp_send(struct socket *sock, const char *buf, const size_t length, unsigned
 		written += len;
 	}	
 	set_fs(oldmm);
-	return 0;
+	return written?written:len;
 }
 
 int tcp_recv(struct socket *sock, char * buf, size_t max, unsigned long flags) {
@@ -119,7 +128,7 @@ int init_module(void)
 	
 	struct sockaddr_in saddr;
 	int ret = sock_create(PF_INET, SOCK_STREAM, IPPROTO_TCP, &conn_socket);
-	if (ret < 0)
+	if (ret < 0) 
 		goto err;
 
 	memset(&saddr, 0, sizeof(saddr));
@@ -136,18 +145,24 @@ int init_module(void)
 	if (time_log == NULL)
 		goto err;
 
-	int message_length = sizeof(long long);	
 	int i;
 	long long val;	
+	reserve = kmalloc(2 * message_length, GFP_KERNEL);
+	buffer = kmalloc(16 * message_length, GFP_KERNEL);
+	buffer_process = kmalloc(18 * message_length, GFP_KERNEL);
+	if (reserve == NULL || buffer == NULL || buffer_process == NULL)
+		goto err;
 	for (i = 0; i < parallel; i++) {
 		val = get_time_in_us();	
-		tcp_send(conn_socket, (char*)&val, message_length, MSG_DONTWAIT);
+		memcpy(buffer, &val, sizeof(long long));
+		memset(buffer + sizeof(long long), 0, message_length - sizeof(long long));
+		tcp_send(conn_socket, buffer, message_length, MSG_DONTWAIT);
 	}
 	
-	char reserve[16];
+	//char reserve[16];
 	int reserve_size = 0;
-	char buffer[128];
-	char buffer_process[128+16];
+	//char buffer[128];
+	//char buffer_process[128+16];
 	int tot_sent = parallel;
 	int tot_recv = 0;
 	while(1) {
@@ -165,7 +180,7 @@ int init_module(void)
 		int processed = 0;
 		while (processed < len) {
 			int remain = len - processed;
-			if (remain >= message_length) {	
+			if (remain >= message_length) {		
 				memcpy(&val, buffer_process + processed, sizeof(long long));	
 				long long diff = get_time_in_us() - val;
 				time_log[tot_recv] = diff;
@@ -173,7 +188,9 @@ int init_module(void)
 				tot_recv++;
 				if (tot_sent < total_requests) {
 					val = get_time_in_us();	
-					tcp_send(conn_socket, (char*)&val, message_length, MSG_DONTWAIT);
+					memcpy(buffer, &val, sizeof(long long));
+					memset(buffer + sizeof(long long), 0, message_length - sizeof(long long));
+					tcp_send(conn_socket, buffer, message_length, MSG_DONTWAIT);
 					tot_sent++;
 				}
 
@@ -201,13 +218,26 @@ int init_module(void)
 		sock_release(conn_socket);
 	if (time_log != NULL)
 		kfree(time_log);
+	if (reserve != NULL)
+		kfree(reserve);
+	if (buffer != NULL)
+		kfree(buffer);
+	if (buffer_process != NULL)
+		kfree(buffer_process);
 	return 0;
 		
 err:
+	printk(KERN_INFO "Error happened\n");
 	if (conn_socket != NULL)
 		sock_release(conn_socket);
 	if (time_log != NULL)
 		kfree(time_log);
+	if (reserve != NULL)
+		kfree(reserve);
+	if (buffer != NULL)
+		kfree(buffer);
+	if (buffer_process != NULL)
+		kfree(buffer_process);
 	return -1;
 }
 
