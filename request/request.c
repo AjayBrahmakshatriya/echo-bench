@@ -5,11 +5,27 @@
 #include <sys/time.h>
 
 
-
+int total_requests;
+long long *time_log;
 long long get_time_in_us(void) {
 	struct timeval tv;
 	gettimeofday(&tv, NULL);
 	return tv.tv_sec * 1000000 + tv.tv_usec;	
+}
+
+void sort_time_array(void) {
+	int i, j;
+	if (time_log == NULL)
+		return;
+	for (i = 0; i < total_requests; i++) {
+		for (j = i+1; j < total_requests; j++) {
+			if (time_log[i] > time_log[j]) {
+				long long temp = time_log[i];
+				time_log[i] = time_log[j];
+				time_log[j] = temp;
+			}
+		}
+	}
 }
 int main(int argc, char* argv[]) {
 	if (argc < 5)
@@ -17,7 +33,7 @@ int main(int argc, char* argv[]) {
 	
 	int fd = atoi(argv[1]);
 	int parallel = atoi(argv[2]);	
-	int total_requests = atoi(argv[3]);
+	total_requests = atoi(argv[3]);
 	int packet_size = atoi(argv[4]);
 
 
@@ -36,7 +52,7 @@ int main(int argc, char* argv[]) {
 	}
 	int tot_sent = parallel;
 	int tot_recv = 0;	
-	long long * time_log = malloc(total_requests * sizeof(*time_log));
+	time_log = malloc(total_requests * sizeof(*time_log));
 	while (1) {
 		if (tot_recv == total_requests)
 			break;
@@ -93,8 +109,17 @@ int main(int argc, char* argv[]) {
 		}
 	}
 	close(fd);
-	for (int i = 0; i < total_requests; i++) {
-		printf("%lld\n", time_log[i]);
-	}
+	sort_time_array();
+	printf("%lld\n", time_log[total_requests * 10/100]);
+	printf("%lld\n", time_log[total_requests * 20/100]);
+	printf("%lld\n", time_log[total_requests * 30/100]);
+	printf("%lld\n", time_log[total_requests * 40/100]);
+	printf("%lld\n", time_log[total_requests * 50/100]);
+	printf("%lld\n", time_log[total_requests * 60/100]);
+	printf("%lld\n", time_log[total_requests * 70/100]);
+	printf("%lld\n", time_log[total_requests * 80/100]);
+	printf("%lld\n", time_log[total_requests * 90/100]);
+	printf("%lld\n", time_log[total_requests * 95/100]);
+	printf("%lld\n", time_log[total_requests * 99/100]);
 	return 0;
 }
