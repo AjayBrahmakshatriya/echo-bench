@@ -20,7 +20,8 @@ struct socket *conn_socket = NULL;
 long long *time_log = NULL;
 int total_requests = 10000;
 int parallel = 1;
-u8 destip[5] = {128, 30, 116, 58, 0};
+//u8 destip[5] = {128, 30, 64, 26, 0};
+u8 destip[5] = {192, 168, 1, 2, 0};
 int message_length = 16;
 
 module_param(message_length, int, 0644);

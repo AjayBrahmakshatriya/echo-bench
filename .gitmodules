@@ -1,0 +1,3 @@
+[submodule "memcached-expr/memcached"]
+	path = memcached-expr/memcached
+	url = https://github.com/AjayBrahmakshatriya/memcached.git

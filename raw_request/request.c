@@ -13,17 +13,20 @@
 // mac address 54:80:28:4b:3f:e6
 struct sockaddr_ll addr;
 unsigned char src_addr[6];
-unsigned char dst_addr[] = {0x54, 0x80, 0x28, 0x4b, 0x3f, 0xe6};
+//unsigned char dst_addr[] = {0x54, 0x80, 0x28, 0x4b, 0x3f, 0xe6};
 //unsigned char dst_addr[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+//unsigned char dst_addr[] = {0xac, 0x1f, 0x6b, 0x87, 0x00, 0x99};
+unsigned char dst_addr[] = {0x98, 0x03, 0x9b, 0x9b, 0x2e, 0xeb};
 char buffer[2048];
 int buf_len = 0;
 int payloadoffset = -1;
-#define MESSAGE_SIZE (1024)
+#define MESSAGE_SIZE (128)
 int sockfd;
 //#define IFNAME ("ib0")
-#define IFNAME ("eno2")
+//#define IFNAME ("eno2")
+#define IFNAME ("enp101s0f1")
 #define TOTAL_REQUESTS (10000)
-#define PARALLEL (5)
+#define PARALLEL (100)
 #define ETH_SIZE (14)
 
 long long time_log[TOTAL_REQUESTS];
@@ -97,7 +100,7 @@ int main(int argc, char* argv[]) {
 	printf("Mac address read as %02x:%02x:%02x:%02x:%02x:%02x\n", src_addr[0], src_addr[1], src_addr[2], src_addr[3], src_addr[4], src_addr[5]);
 	
 
-	unsigned pt = 0x08ab;
+	unsigned pt = 0x80ad;
 	addr.sll_family = AF_PACKET;
 	addr.sll_protocol = htons(pt);
 	addr.sll_ifindex = index;
@@ -124,8 +127,8 @@ int main(int argc, char* argv[]) {
 	memcpy(buffer+buf_len, src_addr, 6);
 	buf_len += 6;
 
-	buffer[buf_len+0] = 0x08;
-	buffer[buf_len+1] = 0xab;
+	buffer[buf_len+0] = 0x80;
+	buffer[buf_len+1] = 0xad;
 	buf_len+=2;
 
 	payloadoffset = buf_len;

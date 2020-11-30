@@ -12,11 +12,11 @@
 char header[] = {0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef};
 char rheader[] = {0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad};
 //#define IFNAME ("ib0")
-#define IFNAME ("enp2s0f0")
+#define IFNAME ("enp101s0f1")
 unsigned char src_addr[6];
 #define BIND (1)
 
-#define MESSAGE_SIZE (1024)
+#define MESSAGE_SIZE (16)
 
 
 #define ETH_SIZE (14)
