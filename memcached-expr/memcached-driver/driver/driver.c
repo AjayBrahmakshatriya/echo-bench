@@ -32,6 +32,7 @@
 #include <linux/delay.h>
 #include <linux/sched/signal.h>
 #include <linux/file.h>
+#include <linux/mmu_context.h>
 
 
 #include "src/memcached.h"
@@ -54,16 +55,29 @@ static struct class *cl;
 
 
 static int clean_up_session(struct file * f) {
+
 	if (f->private_data == NULL)
 		return 0;
 	// Clean up individual states
 	struct memcached_state* state = (struct memcached_state*) f->private_data;
+
+	// Now kill the thread that we had spawned
+	// Wait for it to be killed
+	smp_mb();
+	atomic_set(&(state->thread_to_kill), 1);
+	smp_mb();
+	while(!atomic_read(&(state->thread_killed))) {
+		msleep(100);
+		smp_mb();
+	}
+	
+	// This HAS to happen AFTER the thread is killed
+	// Otherwise dev_remove_pack gets stuck, because the thread blocks for ever
+	// Not a perfect solution either, since other kernel processes might call synchronize_rcu
 	dev_remove_pack(state->proto);
-	// This is tricky. Need to make sure none of the handlers are currently using this
-	// Expect occasional crashes!
-	// I think using dev_remove_pack instead of __dev_remove_pack fixes this
 	kfree(state->proto);
 	state->proto = NULL;
+	
 
         kfree(state->params);
         state->params = NULL;
@@ -83,6 +97,17 @@ static int mem_close(struct inode *i, struct file *f) {
 }
 //#define DEBUG_PACKET
 static int memcached_process(struct sk_buff *skb, struct net_device *dev, struct packet_type * pt, struct net_device *orig_dev) {
+	// We are not going to process the skb here, we will just add it to the queue
+	struct memcached_state *state = (struct memcached_state *) pt->af_packet_priv;
+
+	// Do bump the reference counter before we actually add the skb to the queue
+	// This will be decremented when we dequeue it
+        skb_get(skb);
+	skb_add_to_queue(state, skb);
+	return 0;
+}
+
+static int process_dequed_skb(struct sk_buff * skb, struct memcached_state *state) {
 	// Quickly weed out packets that are not TCP/IP
 #ifdef DEBUG_PACKET
         if (skb->len > 40) {
@@ -110,7 +135,6 @@ static int memcached_process(struct sk_buff *skb, struct net_device *dev, struct
 		return 0;
 	}
 
-	struct memcached_state *state = (struct memcached_state *) pt->af_packet_priv;
 	unsigned short required_port = state->required_port;
 
 	if (skb->data[9] == TCP_PROTOCOL_NUMBER) {
@@ -134,7 +158,7 @@ static int memcached_process(struct sk_buff *skb, struct net_device *dev, struct
 		if (data_len <= 0)
 			return 0;
 			
-		handle_memcached_request(data, data_len, state);
+		handle_memcached_request(data, data_len, state, skb);
 	} else if (skb->data[9] == UDP_PROTOCOL_NUMBER) {
 		char * udp_start = skb->data + 20;
 		int udp_len = skb->len - 20;
@@ -155,10 +179,62 @@ static int memcached_process(struct sk_buff *skb, struct net_device *dev, struct
 		// We will ignore that for now
 		data += 8;
 		data_len -= 8;	
-		handle_memcached_request(data, data_len, state);
+		handle_memcached_request(data, data_len, state, skb);		
 			
 	}
 }
+
+int dedicated_thread_handler(void* state_ptr) {
+	printk(KERN_INFO "New memcached thread created\n");
+	struct memcached_state *state = (struct memcached_state *) state_ptr;
+	// Before we do anything, let us start using the process's mm
+	use_mm(state->process_mm);
+	// thread main loop
+	struct sk_buff * skb;
+	long long counter = 0;
+	while (1) {
+                smp_mb();
+		if (atomic_read(&(state->thread_to_kill)))
+			break;
+		skb = skb_take_from_queue(state);
+		if (skb != NULL) {
+			counter = 0;
+#ifdef DEBUG_PACKET
+			printk(KERN_INFO "Dequed skb from queue = %p\n", skb);
+#endif
+			// Release this skb
+			process_dequed_skb(skb, state);
+			kfree_skb(skb);
+		}
+		// This is required for now, otherwise the CPU gets stuck
+		// Figure out how we can remove this later
+		// Otherwise the latency is going to tank
+		// Maybe we can signal this thread from the interrupt handler?
+		// msleep(10);	
+		counter ++;
+		// This is so that the thread sleep once in a while
+		// There was to be a better workaround
+		if (counter % 100000000 == 0) {
+			msleep(1);
+		}
+	}
+	// Release the process_mm
+	unuse_mm(state->process_mm);
+	smp_mb();
+	atomic_set(&(state->thread_killed), 1);	
+	smp_mb();
+	printk(KERN_INFO "New memcached thread stopped\n");
+	do_exit(0);
+}
+
+
+
+static bool read_bool_from_user(bool * addr) {
+    bool res = false;
+    copy_from_user(&res, addr, sizeof(bool));
+    return res;
+}
+
 
 
 static long mem_ioctl(struct file *f, unsigned int cmd, unsigned long arg) {
@@ -178,6 +254,9 @@ static long mem_ioctl(struct file *f, unsigned int cmd, unsigned long arg) {
         if (params == NULL)
 		goto err;	
 	copy_from_user(params, (char*) arg, sizeof(struct memcached_params));
+
+        printk(KERN_INFO "Expanding parameter address = %p, value = %d\n", params->expanding_ptr, (int)read_bool_from_user(params->expanding_ptr));
+        
 	
 	// If a state is already allocated for this file handle, free it first
 	clean_up_session(f);
@@ -187,10 +266,14 @@ static long mem_ioctl(struct file *f, unsigned int cmd, unsigned long arg) {
 
 	// We start by allocating a state object for this f			
 	struct memcached_state * state = kmalloc(sizeof(struct memcached_state), GFP_KERNEL);
-        state->params = params;
 		
 	if (state == NULL)
 		goto err;
+
+	init_memcached_state(state);
+
+        state->params = params;
+
 	f->private_data = state;
 	
 	// Find the interface relevant to this request
@@ -216,8 +299,16 @@ static long mem_ioctl(struct file *f, unsigned int cmd, unsigned long arg) {
 	printk(KERN_INFO "Starting a hook on %s\n", params->interface_name);
 	dev_add_pack(proto);
 	
-	state->ready = 1;	
+	// We will also save this process's mm in the state for the thread to use
+	state->process_mm = current->mm;	
+
+	// Everything is good, start a kernel thread
+	state->thread_handle = kthread_run(dedicated_thread_handler, (void*)state, "Memcached Handler thread");
+	
+	if (state->thread_handle == NULL)
+		goto err;
 	 			
+	state->ready = 1;	
 	return 0;
 
 
